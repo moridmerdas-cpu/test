@@ -1,10 +1,6 @@
 import os
 from fastapi import FastAPI, Request
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -14,15 +10,14 @@ from telegram.ext import (
     filters,
 )
 
-# ───── تنظیمات ─────
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-ADMINS = {123456789, 987654321}  # آیدی عددی ادمین‌ها
+ADMINS = {123456789}  # آیدی عددی خودت
 
 SETTINGS = {
-    "group": None,     # @groupusername
-    "channel": None,   # @channelusername
+    "group_id": None,
+    "channel_id": None,
     "forward": False,
 }
 
@@ -30,129 +25,119 @@ app = FastAPI()
 tg_app = Application.builder().token(BOT_TOKEN).build()
 
 
-# ───── ابزارها ─────
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMINS
-
-
-def panel_keyboard():
+# ───── پنل ─────
+def panel():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ افزودن گروه", callback_data="add_group")],
         [InlineKeyboardButton("➕ افزودن چنل", callback_data="add_channel")],
         [
-            InlineKeyboardButton("▶️ شروع فوروارد", callback_data="start_forward"),
-            InlineKeyboardButton("⏹ توقف فوروارد", callback_data="stop_forward"),
+            InlineKeyboardButton("▶️ شروع فوروارد", callback_data="start"),
+            InlineKeyboardButton("⏹ توقف فوروارد", callback_data="stop"),
         ],
     ])
 
 
-# ───── /start ─────
+def is_admin(uid):
+    return uid in ADMINS
+
+
+# ───── start ─────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    await update.message.reply_text(
-        "🎛 پنل مدیریت",
-        reply_markup=panel_keyboard()
-    )
+    await update.message.reply_text("🎛 پنل مدیریت", reply_markup=panel())
 
 
-# ───── پنل ─────
-async def panel_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# ───── دکمه‌ها ─────
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-    if not is_admin(query.from_user.id):
+    if not is_admin(q.from_user.id):
         return
 
-    data = query.data
-
-    if data == "add_group":
+    if q.data == "add_group":
         context.user_data["mode"] = "group"
-        await query.message.reply_text("👥 یوزرنیم گروه رو بفرست (مثال: @mygroup)")
+        await q.message.reply_text("👥 یک پیام از گروه فوروارد کن")
 
-    elif data == "add_channel":
+    elif q.data == "add_channel":
         context.user_data["mode"] = "channel"
-        await query.message.reply_text("📢 یوزرنیم چنل رو بفرست (مثال: @mychannel)")
+        await q.message.reply_text("📢 یک پیام از چنل فوروارد کن")
 
-    elif data == "start_forward":
-        if SETTINGS["group"] and SETTINGS["channel"]:
+    elif q.data == "start":
+        if SETTINGS["group_id"] and SETTINGS["channel_id"]:
             SETTINGS["forward"] = True
-            await query.message.reply_text("✅ فوروارد شروع شد")
+            await q.message.reply_text("✅ فوروارد فعال شد")
         else:
-            await query.message.reply_text("❌ اول گروه و چنل رو تنظیم کن")
+            await q.message.reply_text("❌ گروه یا چنل تنظیم نشده")
 
-    elif data == "stop_forward":
+    elif q.data == "stop":
         SETTINGS["forward"] = False
-        await query.message.reply_text("⏹ فوروارد متوقف شد")
+        await q.message.reply_text("⏹ فوروارد متوقف شد")
 
 
-# ───── دریافت @ ─────
-async def receive_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ───── دریافت فوروارد برای تنظیم ─────
+async def setup_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
+    if not update.message.forward_from_chat:
+        return
+
     mode = context.user_data.get("mode")
-    if not mode:
-        return
+    chat = update.message.forward_from_chat
 
-    text = update.message.text.strip()
+    if mode == "group":
+        SETTINGS["group_id"] = chat.id
+        await update.message.reply_text(f"✅ گروه تنظیم شد\nID: {chat.id}")
 
-    if not text.startswith("@"):
-        await update.message.reply_text("❌ باید با @ شروع بشه")
-        return
+    elif mode == "channel":
+        SETTINGS["channel_id"] = chat.id
+        await update.message.reply_text(f"✅ چنل تنظیم شد\nID: {chat.id}")
 
-    SETTINGS[mode] = text
     context.user_data.clear()
-
-    await update.message.reply_text(
-        f"✅ {mode} تنظیم شد:\n{text}",
-        reply_markup=panel_keyboard()
-    )
+    await update.message.reply_text("🎛 پنل", reply_markup=panel())
 
 
-# ───── فوروارد ─────
-async def forward_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ───── فوروارد اصلی ─────
+async def forward_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not SETTINGS["forward"]:
         return
 
-    message = update.message
-    if not message:
+    msg = update.message
+    if not msg:
         return
 
-    if message.chat.username != SETTINGS["group"].replace("@", ""):
+    if msg.chat.id != SETTINGS["group_id"]:
         return
 
-    try:
-        await message.forward(chat_id=SETTINGS["channel"])
-    except Exception as e:
-        print("Forward error:", e)
+    await msg.forward(chat_id=SETTINGS["channel_id"])
 
 
-# ───── هندلرها ─────
+# ───── handlers ─────
 tg_app.add_handler(CommandHandler("start", start))
-tg_app.add_handler(CallbackQueryHandler(panel_actions))
-tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_username))
-tg_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_all))
+tg_app.add_handler(CallbackQueryHandler(buttons))
+tg_app.add_handler(MessageHandler(filters.FORWARDED, setup_from_forward))
+tg_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_messages))
 
 
-# ───── Webhook ─────
+# ───── webhook ─────
 @app.on_event("startup")
 async def startup():
     await tg_app.initialize()
     await tg_app.bot.set_webhook(WEBHOOK_URL)
     await tg_app.start()
-    print("Webhook connected")
 
 
 @app.post("/webhook")
-async def webhook(request: Request):
-    data = await request.json()
+async def webhook(req: Request):
+    data = await req.json()
     update = Update.de_json(data, tg_app.bot)
     await tg_app.process_update(update)
     return {"ok": True}
 
 
 @app.get("/")
-async def root():
-    return {"status": "running"}
+def root():
+    return {"status": "ok"}
