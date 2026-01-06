@@ -1,6 +1,10 @@
 import os
 from fastapi import FastAPI, Request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -10,92 +14,136 @@ from telegram.ext import (
     filters,
 )
 
+# ───── تنظیمات ─────
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+ADMINS = {123456789, 987654321}  # آیدی عددی ادمین‌ها
+
+SETTINGS = {
+    "group": None,     # @groupusername
+    "channel": None,   # @channelusername
+    "forward": False,
+}
 
 app = FastAPI()
 tg_app = Application.builder().token(BOT_TOKEN).build()
 
-LINKS = {
-    "group": None,
-    "channel": None,
-}
 
-# ───────────── /start ─────────────
+# ───── ابزارها ─────
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMINS
+
+
+def panel_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ افزودن گروه", callback_data="add_group")],
+        [InlineKeyboardButton("➕ افزودن چنل", callback_data="add_channel")],
+        [
+            InlineKeyboardButton("▶️ شروع فوروارد", callback_data="start_forward"),
+            InlineKeyboardButton("⏹ توقف فوروارد", callback_data="stop_forward"),
+        ],
+    ])
+
+
+# ───── /start ─────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="panel")]]
+    if not is_admin(update.effective_user.id):
+        return
+
     await update.message.reply_text(
-        "سلام 👋\nبه ربات مدیریت خوش اومدی",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "🎛 پنل مدیریت",
+        reply_markup=panel_keyboard()
     )
 
-# ───────────── PANEL ─────────────
-async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# ───── پنل ─────
+async def panel_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    keyboard = [
-        [InlineKeyboardButton("➕ اتصال گروه", callback_data="set_group")],
-        [InlineKeyboardButton("➕ اتصال چنل", callback_data="set_channel")],
-    ]
+    if not is_admin(query.from_user.id):
+        return
 
-    await query.edit_message_text(
-        "انتخاب کن 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    data = query.data
 
-# ───────────── SET GROUP / CHANNEL ─────────────
-async def set_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "set_group":
+    if data == "add_group":
         context.user_data["mode"] = "group"
-        await query.edit_message_text("لینک گروه رو بفرست (مثال: @mygroup)")
-    else:
+        await query.message.reply_text("👥 یوزرنیم گروه رو بفرست (مثال: @mygroup)")
+
+    elif data == "add_channel":
         context.user_data["mode"] = "channel"
-        await query.edit_message_text("لینک چنل رو بفرست (مثال: @mychannel)")
+        await query.message.reply_text("📢 یوزرنیم چنل رو بفرست (مثال: @mychannel)")
 
-# ───────────── RECEIVE LINK ─────────────
-async def receive_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    elif data == "start_forward":
+        if SETTINGS["group"] and SETTINGS["channel"]:
+            SETTINGS["forward"] = True
+            await query.message.reply_text("✅ فوروارد شروع شد")
+        else:
+            await query.message.reply_text("❌ اول گروه و چنل رو تنظیم کن")
+
+    elif data == "stop_forward":
+        SETTINGS["forward"] = False
+        await query.message.reply_text("⏹ فوروارد متوقف شد")
+
+
+# ───── دریافت @ ─────
+async def receive_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
     mode = context.user_data.get("mode")
-
     if not mode:
         return
 
+    text = update.message.text.strip()
+
     if not text.startswith("@"):
-        await update.message.reply_text("❌ لینک باید با @ شروع بشه")
+        await update.message.reply_text("❌ باید با @ شروع بشه")
         return
 
-    LINKS[mode] = text
-    await update.message.reply_text(f"✅ {mode} وصل شد:\n{text}")
+    SETTINGS[mode] = text
     context.user_data.clear()
 
-# ───────────── FORWARD ALL ─────────────
+    await update.message.reply_text(
+        f"✅ {mode} تنظیم شد:\n{text}",
+        reply_markup=panel_keyboard()
+    )
+
+
+# ───── فوروارد ─────
 async def forward_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not LINKS["group"] or not LINKS["channel"]:
+    if not SETTINGS["forward"]:
+        return
+
+    message = update.message
+    if not message:
+        return
+
+    if message.chat.username != SETTINGS["group"].replace("@", ""):
         return
 
     try:
-        await update.message.forward(chat_id=LINKS["channel"])
-    except Exception:
-        pass
+        await message.forward(chat_id=SETTINGS["channel"])
+    except Exception as e:
+        print("Forward error:", e)
 
-# ───────────── HANDLERS ─────────────
+
+# ───── هندلرها ─────
 tg_app.add_handler(CommandHandler("start", start))
-tg_app.add_handler(CallbackQueryHandler(panel, pattern="panel"))
-tg_app.add_handler(CallbackQueryHandler(set_link, pattern="set_"))
-tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link))
+tg_app.add_handler(CallbackQueryHandler(panel_actions))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_username))
 tg_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_all))
 
-# ───────────── WEBHOOK ─────────────
+
+# ───── Webhook ─────
 @app.on_event("startup")
 async def startup():
     await tg_app.initialize()
     await tg_app.bot.set_webhook(WEBHOOK_URL)
     await tg_app.start()
-    print("✅ Webhook set")
+    print("Webhook connected")
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -103,6 +151,7 @@ async def webhook(request: Request):
     update = Update.de_json(data, tg_app.bot)
     await tg_app.process_update(update)
     return {"ok": True}
+
 
 @app.get("/")
 async def root():
