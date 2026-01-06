@@ -1,3 +1,4 @@
 python-telegram-bot==20.7
-fastapi
-uvicorn
+fastapi==0.110.0
+uvicorn==0.29.0
+httpx==0.25.2
