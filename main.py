@@ -4,8 +4,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
     filters,
 )
@@ -16,7 +16,9 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 ADMINS = {123456789}  # آیدی عددی خودت
 
 SETTINGS = {
+    "group_username": None,
     "group_id": None,
+    "channel_username": None,
     "channel_id": None,
     "forward": False,
 }
@@ -25,11 +27,11 @@ app = FastAPI()
 tg_app = Application.builder().token(BOT_TOKEN).build()
 
 
-# ───── پنل ─────
+# ───── ابزار ─────
 def panel():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ افزودن گروه", callback_data="add_group")],
-        [InlineKeyboardButton("➕ افزودن چنل", callback_data="add_channel")],
+        [InlineKeyboardButton("➕ افزودن گروه (@)", callback_data="add_group")],
+        [InlineKeyboardButton("➕ افزودن چنل (@)", callback_data="add_channel")],
         [
             InlineKeyboardButton("▶️ شروع فوروارد", callback_data="start"),
             InlineKeyboardButton("⏹ توقف فوروارد", callback_data="stop"),
@@ -45,7 +47,6 @@ def is_admin(uid):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
-
     await update.message.reply_text("🎛 پنل مدیریت", reply_markup=panel())
 
 
@@ -59,11 +60,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "add_group":
         context.user_data["mode"] = "group"
-        await q.message.reply_text("👥 یک پیام از گروه فوروارد کن")
+        await q.message.reply_text("👥 یوزرنیم گروه رو بفرست\nمثال: @mygroup")
 
     elif q.data == "add_channel":
         context.user_data["mode"] = "channel"
-        await q.message.reply_text("📢 یک پیام از چنل فوروارد کن")
+        await q.message.reply_text("📢 یوزرنیم چنل رو بفرست\nمثال: @mychannel")
 
     elif q.data == "start":
         if SETTINGS["group_id"] and SETTINGS["channel_id"]:
@@ -77,31 +78,42 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("⏹ فوروارد متوقف شد")
 
 
-# ───── دریافت فوروارد برای تنظیم ─────
-async def setup_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ───── دریافت @username ─────
+async def receive_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    if not update.message.forward_from_chat:
+    mode = context.user_data.get("mode")
+    if not mode:
         return
 
-    mode = context.user_data.get("mode")
-    chat = update.message.forward_from_chat
+    username = update.message.text.strip()
+    if not username.startswith("@"):
+        await update.message.reply_text("❌ باید با @ شروع بشه")
+        return
 
-    if mode == "group":
-        SETTINGS["group_id"] = chat.id
-        await update.message.reply_text(f"✅ گروه تنظیم شد\nID: {chat.id}")
+    try:
+        chat = await context.bot.get_chat(username)
 
-    elif mode == "channel":
-        SETTINGS["channel_id"] = chat.id
-        await update.message.reply_text(f"✅ چنل تنظیم شد\nID: {chat.id}")
+        if mode == "group":
+            SETTINGS["group_username"] = username
+            SETTINGS["group_id"] = chat.id
+            await update.message.reply_text(f"✅ گروه ثبت شد\n{username}")
 
-    context.user_data.clear()
-    await update.message.reply_text("🎛 پنل", reply_markup=panel())
+        else:
+            SETTINGS["channel_username"] = username
+            SETTINGS["channel_id"] = chat.id
+            await update.message.reply_text(f"✅ چنل ثبت شد\n{username}")
+
+        context.user_data.clear()
+        await update.message.reply_text("🎛 پنل", reply_markup=panel())
+
+    except Exception as e:
+        await update.message.reply_text("❌ یوزرنیم پیدا نشد یا ربات دسترسی ندارد")
 
 
-# ───── فوروارد اصلی ─────
-async def forward_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ───── فوروارد ─────
+async def forward_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not SETTINGS["forward"]:
         return
 
@@ -118,8 +130,8 @@ async def forward_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ───── handlers ─────
 tg_app.add_handler(CommandHandler("start", start))
 tg_app.add_handler(CallbackQueryHandler(buttons))
-tg_app.add_handler(MessageHandler(filters.FORWARDED, setup_from_forward))
-tg_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_messages))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_username))
+tg_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_all))
 
 
 # ───── webhook ─────
@@ -140,4 +152,4 @@ async def webhook(req: Request):
 
 @app.get("/")
 def root():
-    return {"status": "ok"}
+    return {"status": "running"}
