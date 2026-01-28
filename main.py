@@ -13,7 +13,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-ADMINS = {123456789}  # آیدی عددی خودت
+ADMINS = {8321215905}  # آیدی عددی خودت
 
 SETTINGS = {
     "group_username": None,
@@ -153,3 +153,4 @@ async def webhook(req: Request):
 @app.get("/")
 def root():
     return {"status": "running"}
+
