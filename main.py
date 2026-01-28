@@ -13,7 +13,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-ADMINS = {"id_admin"}  # آیدی عددی خودت
+ADMINS = {"ID_ADMIN"}  # آیدی عددی خودت
 
 SETTINGS = {
     "group_username": None,
